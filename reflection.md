@@ -45,7 +45,9 @@ User can able to delete tasks
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
+  - The conflict detection strategy currently only checks for **exact time matches** (e.g., two tasks both independently tagged "14:00") instead of computing true overlapping duration intervals (e.g., a 60-minute task starting at "14:00" overlapping with another task at "14:30").
 - Why is that tradeoff reasonable for this scenario?
+  - It is reasonable for our lightweight minimum viable product (MVP): checking for exact string matches (`O(N)` dictionary grouping) is significantly simpler and faster than importing heavy timestamp libraries to evaluate continuous minute-by-minute range intersections. For everyday pet scheduling, most accidental double-bookings happen when a user accidentally assigns the exact same starting hour twice, prioritizing performance and code readability over stringent calendar rules.
 
 ---
 
