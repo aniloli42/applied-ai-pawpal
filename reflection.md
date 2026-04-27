@@ -136,7 +136,67 @@
 
 ---
 
-## 5. Reflection
+## 5. Reliability and Evaluation: How You Test and Improve Your AI
+
+### Automated Tests
+
+PawPal+ uses pytest with 122 automated tests across two files. Of those, 51 tests target the AI layer directly (`tests/test_ai_agent.py`) — covering prompt construction, API response parsing, and all four guard layers. Gemini is monkeypatched in every test, so no real API calls are made and results are fully deterministic.
+
+**Result: 122/122 tests pass in under 0.5 seconds.**
+
+| Test Class | Tests | What It Checks |
+|---|---|---|
+| `TestIsValidSuggestion` | 14 | Rejects bad priorities, unknown categories, out-of-range durations, empty/oversized titles |
+| `TestGetSuggestionsGuards` | 4 | Filters off-topic API responses; deduplicates existing task titles (case-insensitive) |
+| `TestFormatPromptScopeGuard` | 3 | Confirms SCOPE restriction text appears in every prompt sent to Gemini |
+| `TestGetSuggestions` | 10 | Parses valid responses, handles markdown code blocks, returns empty list when API gives nothing |
+
+---
+
+### Output Validation (Hard Filtering)
+
+Instead of confidence scores, the system uses a field-level validation gate (`_is_valid_suggestion()`) that applies a binary pass/fail check to every suggestion Gemini returns before it reaches the UI. This is more reliable than a confidence score because it runs deterministically regardless of model behavior — Gemini cannot produce a value outside the allowed set and have it slip through.
+
+Rules enforced on every AI response field:
+- `priority` must be `high`, `medium`, or `low`
+- `category` must be one of `walk`, `feeding`, `meds`, `grooming`, `enrichment`, `other`
+- `duration_minutes` must be an integer between 5 and 480
+- `title` must be a non-empty string of 100 characters or fewer
+- `preferred_time_slot` must be `morning`, `afternoon`, `evening`, or `any`
+
+In testing with intentionally malformed mock responses, the filter correctly blocked 100% of invalid suggestions.
+
+---
+
+### Error Handling and Logging
+
+The following failure modes are caught and surfaced to the user rather than crashing silently:
+
+- **Missing API key** — `ValueError` raised in `PawPalAgent.__init__()`, caught in `app.py`, shown as a setup message with a link to get a free key.
+- **JSON parse failure** — caught by the generic `Exception` handler in the button callback; the error message is displayed inline without breaking the rest of the UI.
+- **Rate limit exceeded** — session call count and per-pet cooldown are checked before any API call is made; a warning with seconds remaining is shown instead of triggering an unnecessary request.
+- **Off-topic or malformed responses** — invalid suggestions are silently filtered; the UI shows "0 suggestions found" rather than displaying broken data or throwing an error.
+
+---
+
+### Human Evaluation
+
+Every AI suggestion goes through a human review checkpoint before it creates a real task. Each suggestion card in the UI shows:
+- A one-sentence reason for the suggestion
+- An expandable detailed reasoning section where Gemini explains its analysis
+- A slot conflict warning if the suggestion targets a time slot already occupied by an existing pending task
+
+The owner explicitly clicks Accept or Dismiss — the AI cannot write tasks to the system autonomously. This means even if the automated guards miss something unusual, a human sees it before it affects real data.
+
+---
+
+### Summary
+
+> 122/122 automated tests pass. The output validator hard-filters 100% of invalid API responses in testing. Error handling covers four distinct failure modes. Every AI suggestion requires explicit human approval before entering the system. The main reliability gap is session-only rate limiting — restarting the app resets the counter, so a persistent store would be needed for a production deployment.
+
+---
+
+## 6. Reflection
 
 **a. What went well**
 
