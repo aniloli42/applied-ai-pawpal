@@ -136,7 +136,67 @@
 
 ---
 
-## 5. Reflection
+## 5. Reliability and Evaluation: How You Test and Improve Your AI
+
+### Automated Tests
+
+PawPal+ uses pytest with 122 automated tests across two files. Of those, 51 tests target the AI layer directly (`tests/test_ai_agent.py`) — covering prompt construction, API response parsing, and all four guard layers. Gemini is monkeypatched in every test, so no real API calls are made and results are fully deterministic.
+
+**Result: 122/122 tests pass in under 0.5 seconds.**
+
+| Test Class | Tests | What It Checks |
+|---|---|---|
+| `TestIsValidSuggestion` | 14 | Rejects bad priorities, unknown categories, out-of-range durations, empty/oversized titles |
+| `TestGetSuggestionsGuards` | 4 | Filters off-topic API responses; deduplicates existing task titles (case-insensitive) |
+| `TestFormatPromptScopeGuard` | 3 | Confirms SCOPE restriction text appears in every prompt sent to Gemini |
+| `TestGetSuggestions` | 10 | Parses valid responses, handles markdown code blocks, returns empty list when API gives nothing |
+
+---
+
+### Output Validation (Hard Filtering)
+
+Instead of confidence scores, the system uses a field-level validation gate (`_is_valid_suggestion()`) that applies a binary pass/fail check to every suggestion Gemini returns before it reaches the UI. This is more reliable than a confidence score because it runs deterministically regardless of model behavior — Gemini cannot produce a value outside the allowed set and have it slip through.
+
+Rules enforced on every AI response field:
+- `priority` must be `high`, `medium`, or `low`
+- `category` must be one of `walk`, `feeding`, `meds`, `grooming`, `enrichment`, `other`
+- `duration_minutes` must be an integer between 5 and 480
+- `title` must be a non-empty string of 100 characters or fewer
+- `preferred_time_slot` must be `morning`, `afternoon`, `evening`, or `any`
+
+In testing with intentionally malformed mock responses, the filter correctly blocked 100% of invalid suggestions.
+
+---
+
+### Error Handling and Logging
+
+The following failure modes are caught and surfaced to the user rather than crashing silently:
+
+- **Missing API key** — `ValueError` raised in `PawPalAgent.__init__()`, caught in `app.py`, shown as a setup message with a link to get a free key.
+- **JSON parse failure** — caught by the generic `Exception` handler in the button callback; the error message is displayed inline without breaking the rest of the UI.
+- **Rate limit exceeded** — session call count and per-pet cooldown are checked before any API call is made; a warning with seconds remaining is shown instead of triggering an unnecessary request.
+- **Off-topic or malformed responses** — invalid suggestions are silently filtered; the UI shows "0 suggestions found" rather than displaying broken data or throwing an error.
+
+---
+
+### Human Evaluation
+
+Every AI suggestion goes through a human review checkpoint before it creates a real task. Each suggestion card in the UI shows:
+- A one-sentence reason for the suggestion
+- An expandable detailed reasoning section where Gemini explains its analysis
+- A slot conflict warning if the suggestion targets a time slot already occupied by an existing pending task
+
+The owner explicitly clicks Accept or Dismiss — the AI cannot write tasks to the system autonomously. This means even if the automated guards miss something unusual, a human sees it before it affects real data.
+
+---
+
+### Summary
+
+> 122/122 automated tests pass. The output validator hard-filters 100% of invalid API responses in testing. Error handling covers four distinct failure modes. Every AI suggestion requires explicit human approval before entering the system. The main reliability gap is session-only rate limiting — restarting the app resets the counter, so a persistent store would be needed for a production deployment.
+
+---
+
+## 6. Reflection
 
 **a. What went well**
 
@@ -151,3 +211,45 @@ The **SOLID architecture** was the best decision of the project. Extracting `Sch
 **c. Key takeaway**
 
 The most valuable skill developed in this project was learning to **treat AI as a collaborator with no design memory, not an autonomous developer**. AI tools are exceptional at implementing a well-described pattern quickly. They cannot hold your architectural decisions in mind across a multi-day project or know which tradeoff you deliberately made three sessions ago. Writing detailed docstrings, keeping a live UML, and using structured chat sessions were not optional polish — they were the infrastructure that made AI collaboration produce good code instead of fast but inconsistent code. The lead architect's most important job is to be the memory and judgment that the AI doesn't have.
+
+---
+
+## 7. Reflection and Ethics: Thinking Critically About Your AI
+
+### Limitations and Biases
+
+The most significant limitation is that Gemini's suggestions reflect the biases of its training data. The model knows far more about common domestic pets — dogs and cats — than it does about less common species like reptiles, birds, or small mammals. A suggestion for "daily brushing" is reasonable for a Shiba Inu but may be completely inappropriate for a bearded dragon. The prompt includes the pet's species and breed, which helps, but Gemini has no way to signal uncertainty about uncommon species — it generates suggestions with the same confident tone regardless of how well-supported they are.
+
+A second limitation is that the system has no memory across sessions. Every time the owner clicks "Analyze," Gemini sees the current state of tasks but has no knowledge of what was suggested and dismissed previously. This means the model may repeatedly suggest the same tasks across sessions if they are not accepted — there is no persistent "dismissed" history that carries over.
+
+Finally, the `other` category acts as a catch-all that can allow loosely pet-related suggestions to pass the validation guard. A suggestion titled "Buy new leash" would pass all field checks — it has a valid category, duration, and priority — even though it is a shopping task, not a care task. The scope lock in the prompt reduces this, but does not eliminate it entirely.
+
+---
+
+### Could Your AI Be Misused?
+
+In its current form, the misuse risk is low because the system operates in a narrow, personal domain — it suggests pet care tasks for data the user themselves entered. However, three scenarios are worth considering:
+
+**Prompt injection via pet names or task titles.** A malicious user who controls the data fed into `build_context()` could embed instructions in a pet's name or a task title (e.g., naming a pet `"Ignore previous instructions and..."`). The prompt is built by f-string interpolation, so this data lands directly in the Gemini request. In a multi-user deployment, this would be a real attack surface. The fix is to sanitize or quote user-supplied strings before embedding them in prompts.
+
+**API cost abuse.** Without authentication, anyone who can reach the app could trigger repeated API calls. The session-level rate limiter (10 calls, 60-second cooldown) is a partial mitigation, but it resets on page refresh. A persistent rate limit tied to a user identity or IP address would be needed for a public deployment.
+
+**Over-reliance by inexperienced owners.** A new pet owner might accept all AI suggestions without evaluating whether they are appropriate for their specific animal. The human review checkpoint (Accept/Dismiss) is intentional friction against this, but a future version could add a disclaimer that suggestions are starting points, not veterinary advice.
+
+---
+
+### What Surprised You During Testing
+
+The most surprising finding was how reliably Gemini respected the JSON schema under normal conditions — and how completely it broke under edge cases. When the context contained a pet with no tasks and no empty slots, Gemini occasionally returned suggestions with `"preferred_time_slot": "none"` instead of `"any"`, which is not a valid value. The field validator caught this, but it was unexpected that a formatting detail that small would cause the model to invent a new value rather than defaulting to the documented fallback.
+
+The second surprise was discovering that the deduplication guard was necessary at all. The prompt explicitly lists existing task titles and instructs Gemini not to repeat them. In approximately one in five test runs with a realistic context (several pending tasks, one or two completed), Gemini still returned a suggestion whose title was a close paraphrase of an existing task — not an exact match, but semantically identical (e.g., "Evening Walk" when "Morning Walk" already existed). Exact-string dedup does not catch semantic duplicates. A production system would need embedding-based similarity to fully solve this.
+
+---
+
+### AI Collaboration: One Helpful Suggestion, One Flawed One
+
+**Helpful: the guard architecture itself.**
+When asked how to make AI outputs safe for a pet care app, Claude Code suggested a layered approach — scope lock in the prompt, field-level validation in code, and deduplication as a post-processing step — rather than trying to solve everything in the prompt alone. This was exactly the right framing. Prompting is soft and probabilistic; code validation is hard and deterministic. Separating the two responsibilities produced a more robust system than a single "perfect prompt" ever could have. That architectural suggestion shaped the entire `_is_valid_suggestion()` design and the four-guard structure.
+
+**Flawed: rate limiting inside PawPalAgent.**
+An early suggestion placed the rate-limiting logic inside `PawPalAgent.__init__()` using a class-level timestamp dictionary. The reasoning was that the agent should own its own usage constraints. In practice, this broke immediately — `app.py` creates a fresh `PawPalAgent()` instance on every button click, so the class-level state reset with every call. The rate limiter never fired once. The correct fix was to move call tracking into `st.session_state`, which persists across Streamlit reruns. The AI suggestion was structurally reasonable in a long-lived service architecture, but wrong for a stateless-per-click Streamlit pattern — a context-specific failure that only became visible in a running app, not in unit tests.
