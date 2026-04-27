@@ -131,7 +131,7 @@ def complete_task(self, task_id: str, on_date: str) -> None:
 ## Commit Rules
 
 - **Conventional Commits format:** `feat:`, `fix:`, `test:`, `refactor:`, `docs:` prefixes required
-- **One concern per commit:** Never bundle unrelated changes
+- **One concern per commit:** One file or one logical change per commit — never bundle multiple files unless they are truly inseparable (e.g., a rename across two files)
 - **Reference the task/feature** in the commit body or footer (e.g., `Implements: pet medication tracking`)
 - Never commit broken or incomplete code
 
