@@ -6,6 +6,18 @@ PawPal+ helps busy pet owners stay consistent with their pet care routine. It le
 
 ---
 
+## 🎯 Portfolio Artifact
+
+**GitHub Repository:** [github.com/aniloli42/applied-ai-pawpal](https://github.com/aniloli42/applied-ai-pawpal)
+
+**Loom Walkthrough:** [Watch end-to-end demo](https://www.loom.com/share/e7ec45a30662468ca3382d0f08b89190)
+
+### What this project says about me as an AI engineer
+
+PawPal+ reflects how I think about AI in production: capability without guardrails is a liability, not a feature. My instinct when adding the Gemini integration was not to write the best prompt — it was to build the validation layer first, because I know language models are probabilistic and prompts are suggestions, not contracts. The four-guard pipeline (scope lock, field validation, deduplication, rate limiting) came before the happy-path UI, and it was tested with adversarial inputs before a real API key was ever used. That sequencing — defense before feature, test before ship — is how I approach AI engineering. I also kept the human in the loop deliberately: the Accept/Dismiss checkpoint is not a UX nicety, it is an architectural decision about where trust should live. I want to build AI systems that augment human judgment, not replace it.
+
+---
+
 ## 📋 Table of Contents
 
 - [Original Project (Modules 1–3)](#-original-project-modules-13)
