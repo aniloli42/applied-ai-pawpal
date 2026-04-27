@@ -146,4 +146,6 @@ The following require explicit user confirmation before proceeding:
 3. **Changing data model fields** on `Task`, `Pet`, `Owner`, `Schedule`, or `ScheduledSlot`
 4. **Refactoring working code** — structural changes to classes or files that aren't part of the current task
 
-When in doubt, ask. Do not scaffold LLM/AI integration code speculatively — AI features are not planned yet.
+When in doubt, ask. Do not add additional LLM integrations speculatively.
+
+**Agentic workflow (implemented):** `ai_agent.py` — `PawPalAgent` uses Gemini 2.5 Flash (`google-genai` SDK) to suggest missing care tasks. `TaskSuggestion` dataclass carries `preferred_time_slot` and `reasoning` to surface why each suggestion was made and avoid slot conflicts. External API mocked with `unittest.mock.patch("ai_agent.genai.Client")` in tests — do NOT mock `pawpal_system.py` classes.
