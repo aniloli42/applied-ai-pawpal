@@ -335,3 +335,196 @@ class TestGetSuggestions:
                 assert s.preferred_time_slot not in occupied, (
                     f"Suggestion '{s.title}' conflicts with occupied slot 'morning'"
                 )
+
+
+# ===========================================================================
+# Guard 1 — Prompt scope lock
+# ===========================================================================
+
+class TestFormatPromptScopeGuard:
+
+    def test_prompt_includes_scope_restriction(self, agent: PawPalAgent, owner_with_pet) -> None:
+        owner, pet = owner_with_pet
+        ctx = agent.build_context(owner, pet.id)
+        prompt = agent.format_prompt(ctx)
+        assert "SCOPE" in prompt
+
+    def test_prompt_restricts_to_pet_care_only(self, agent: PawPalAgent, owner_with_pet) -> None:
+        owner, pet = owner_with_pet
+        ctx = agent.build_context(owner, pet.id)
+        prompt = agent.format_prompt(ctx)
+        assert "pet care" in prompt.lower()
+
+    def test_prompt_instructs_empty_response_when_no_suggestions(
+        self, agent: PawPalAgent, owner_with_pet
+    ) -> None:
+        owner, pet = owner_with_pet
+        ctx = agent.build_context(owner, pet.id)
+        prompt = agent.format_prompt(ctx)
+        assert '{"suggestions": []}' in prompt
+
+
+# ===========================================================================
+# Guard 2 — Output validation (_is_valid_suggestion)
+# ===========================================================================
+
+VALID_SUGGESTION: dict = {
+    "title": "Dental chew",
+    "duration_minutes": 15,
+    "priority": "medium",
+    "category": "grooming",
+    "preferred_time_slot": "evening",
+    "reason": "Prevents tartar buildup",
+    "reasoning": "Shiba Inus are prone to dental issues.",
+}
+
+
+class TestIsValidSuggestion:
+
+    def test_valid_suggestion_returns_true(self) -> None:
+        assert PawPalAgent._is_valid_suggestion(VALID_SUGGESTION) is True
+
+    def test_invalid_priority_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "priority": "critical"}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_invalid_category_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "category": "finance"}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_invalid_slot_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "preferred_time_slot": "midnight"}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_duration_too_low_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "duration_minutes": 0}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_duration_too_high_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "duration_minutes": 1000}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_empty_title_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "title": ""}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_whitespace_only_title_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "title": "   "}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_title_too_long_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "title": "x" * 101}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_title_at_max_length_returns_true(self) -> None:
+        s = {**VALID_SUGGESTION, "title": "x" * 100}
+        assert PawPalAgent._is_valid_suggestion(s) is True
+
+    def test_duration_at_min_boundary_returns_true(self) -> None:
+        s = {**VALID_SUGGESTION, "duration_minutes": 5}
+        assert PawPalAgent._is_valid_suggestion(s) is True
+
+    def test_duration_at_max_boundary_returns_true(self) -> None:
+        s = {**VALID_SUGGESTION, "duration_minutes": 480}
+        assert PawPalAgent._is_valid_suggestion(s) is True
+
+    def test_non_numeric_duration_returns_false(self) -> None:
+        s = {**VALID_SUGGESTION, "duration_minutes": "lots"}
+        assert PawPalAgent._is_valid_suggestion(s) is False
+
+    def test_missing_slot_defaults_to_any_and_is_valid(self) -> None:
+        s = {k: v for k, v in VALID_SUGGESTION.items() if k != "preferred_time_slot"}
+        assert PawPalAgent._is_valid_suggestion(s) is True
+
+
+# ===========================================================================
+# Guard 2 — get_suggestions filters invalid API responses
+# ===========================================================================
+
+INVALID_CATEGORY_RESPONSE = json.dumps({
+    "suggestions": [
+        {
+            "title": "Buy stocks",
+            "duration_minutes": 15,
+            "priority": "high",
+            "category": "finance",
+            "preferred_time_slot": "morning",
+            "reason": "Off-topic",
+            "reasoning": "Not pet care.",
+        }
+    ]
+})
+
+MIXED_VALID_INVALID_RESPONSE = json.dumps({
+    "suggestions": [
+        {
+            "title": "Dental chew",
+            "duration_minutes": 5,
+            "priority": "medium",
+            "category": "grooming",
+            "preferred_time_slot": "evening",
+            "reason": "Good for teeth",
+            "reasoning": "Shiba Inus need dental care.",
+        },
+        {
+            "title": "Bad suggestion",
+            "duration_minutes": 9999,
+            "priority": "critical",
+            "category": "finance",
+            "preferred_time_slot": "midnight",
+            "reason": "Off-topic",
+            "reasoning": "Not pet care.",
+        },
+    ]
+})
+
+
+class TestGetSuggestionsGuards:
+
+    def _agent_with_response(self, monkeypatch, response_text: str) -> PawPalAgent:
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        mock_response = MagicMock()
+        mock_response.text = response_text
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+        with patch("ai_agent.genai.Client", return_value=mock_client):
+            return PawPalAgent()
+
+    def test_invalid_category_suggestion_is_filtered(
+        self, monkeypatch, owner_with_pet
+    ) -> None:
+        owner, pet = owner_with_pet
+        ag = self._agent_with_response(monkeypatch, INVALID_CATEGORY_RESPONSE)
+        suggestions = ag.get_suggestions(owner, pet.id)
+        assert suggestions == []
+
+    def test_only_valid_suggestions_returned_from_mixed_response(
+        self, monkeypatch, owner_with_pet
+    ) -> None:
+        owner, pet = owner_with_pet
+        ag = self._agent_with_response(monkeypatch, MIXED_VALID_INVALID_RESPONSE)
+        suggestions = ag.get_suggestions(owner, pet.id)
+        assert len(suggestions) == 1
+        assert suggestions[0].title == "Dental chew"
+
+    def test_existing_task_title_is_deduplicated(
+        self, monkeypatch, owner_with_pet
+    ) -> None:
+        owner, pet = owner_with_pet
+        owner.create_task(pet_id=pet.id, title="Dental chew", duration_minutes=5,
+                          category="grooming")
+        ag = self._agent_with_response(monkeypatch, SAMPLE_GEMINI_RESPONSE)
+        suggestions = ag.get_suggestions(owner, pet.id)
+        titles = [s.title for s in suggestions]
+        assert "Dental chew" not in titles
+
+    def test_dedup_is_case_insensitive(
+        self, monkeypatch, owner_with_pet
+    ) -> None:
+        owner, pet = owner_with_pet
+        owner.create_task(pet_id=pet.id, title="dental chew", duration_minutes=5,
+                          category="grooming")
+        ag = self._agent_with_response(monkeypatch, SAMPLE_GEMINI_RESPONSE)
+        suggestions = ag.get_suggestions(owner, pet.id)
+        titles = [s.title for s in suggestions]
+        assert "Dental chew" not in titles

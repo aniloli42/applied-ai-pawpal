@@ -57,6 +57,15 @@ class PawPalAgent:
 
     MODEL_NAME: str = "gemini-2.5-flash"
 
+    _VALID_PRIORITIES: frozenset[str] = frozenset({"high", "medium", "low"})
+    _VALID_CATEGORIES: frozenset[str] = frozenset(
+        {"walk", "feeding", "meds", "grooming", "enrichment", "other"}
+    )
+    _VALID_SLOTS: frozenset[str] = frozenset({"morning", "afternoon", "evening", "any"})
+    _MIN_DURATION: int = 5
+    _MAX_DURATION: int = 480
+    _MAX_TITLE_LEN: int = 100
+
     def __init__(self) -> None:
         """Initialize agent. Raises ValueError if GEMINI_API_KEY is not set."""
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -66,6 +75,23 @@ class PawPalAgent:
                 "Get a free key at https://aistudio.google.com/app/apikey"
             )
         self._client = genai.Client(api_key=api_key)
+
+    @staticmethod
+    def _is_valid_suggestion(s: dict) -> bool:
+        """Return True only if every field in a raw suggestion dict is within allowed bounds."""
+        title = s.get("title", "")
+        try:
+            dur = int(s.get("duration_minutes", 0))
+        except (TypeError, ValueError):
+            return False
+        return (
+            isinstance(title, str)
+            and 0 < len(title.strip()) <= PawPalAgent._MAX_TITLE_LEN
+            and PawPalAgent._MIN_DURATION <= dur <= PawPalAgent._MAX_DURATION
+            and s.get("priority") in PawPalAgent._VALID_PRIORITIES
+            and s.get("category") in PawPalAgent._VALID_CATEGORIES
+            and s.get("preferred_time_slot", "any") in PawPalAgent._VALID_SLOTS
+        )
 
     def build_context(self, owner: Owner, pet_id: str) -> dict:
         """Build structured care context for a pet to feed into the prompt.
@@ -158,6 +184,11 @@ RULES:
 4. Provide a detailed "reasoning" explaining exactly WHY you are suggesting this task for this specific pet — reference the pet's breed, age, existing gaps, or overdue items.
 5. Provide a short one-sentence "reason" summary for display.
 
+SCOPE: You are strictly a pet care assistant. Only suggest tasks directly related
+to pet health, feeding, exercise, grooming, enrichment, or medication.
+If you cannot generate relevant pet care suggestions, return {{"suggestions": []}}.
+Do NOT suggest anything outside pet care under any circumstances.
+
 Respond ONLY with valid JSON in this exact format — no extra text:
 {{
   "suggestions": [
@@ -195,6 +226,13 @@ Respond ONLY with valid JSON in this exact format — no extra text:
 
         data = json.loads(text.strip())
 
+        raw = data.get("suggestions", [])
+        validated = [s for s in raw if self._is_valid_suggestion(s)]
+
+        pet = owner.get_pet(pet_id)
+        existing_lower = {t.title.strip().lower() for t in pet.tasks}
+        validated = [s for s in validated if s["title"].strip().lower() not in existing_lower]
+
         return [
             TaskSuggestion(
                 pet_id=pet_id,
@@ -206,5 +244,5 @@ Respond ONLY with valid JSON in this exact format — no extra text:
                 reason=s["reason"],
                 reasoning=s.get("reasoning", ""),
             )
-            for s in data.get("suggestions", [])
+            for s in validated
         ]

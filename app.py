@@ -6,6 +6,7 @@ Session state:
     st.session_state.owner  — the single Owner instance for this session
 """
 
+import time
 from datetime import date
 import streamlit as st
 from pawpal_system import Owner, Pet, Scheduler
@@ -28,6 +29,12 @@ AI_KEY_MISSING_MSG = (
 )
 AI_ERROR_MSG = "Could not get suggestions: {error}"
 AI_CONFLICT_NOTICE = "⚠️ Suggestion targets an already-occupied slot — review before accepting."
+AI_RATE_SESSION_MSG = "Session limit reached ({max} analyses). Restart the app to reset."
+AI_RATE_COOLDOWN_MSG = "Wait {secs}s before re-analyzing {name}."
+AI_USAGE_CAPTION = "AI analyses used this session: {used}/{max}"
+
+MAX_SESSION_CALLS: int = 10
+PET_COOLDOWN_SECONDS: int = 60
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -360,25 +367,43 @@ if "ai_suggestions" not in st.session_state:
     st.session_state.ai_suggestions: dict[str, list[TaskSuggestion]] = {}
 if "dismissed_suggestions" not in st.session_state:
     st.session_state.dismissed_suggestions: set[str] = set()
+if "ai_call_count" not in st.session_state:
+    st.session_state.ai_call_count: int = 0
+if "ai_last_call_time" not in st.session_state:
+    st.session_state.ai_last_call_time: dict[str, float] = {}
 
 ai_pet_name = st.selectbox("Analyze care for", list(pet_options.keys()), key="ai_pet_select")
 ai_pet = pet_options[ai_pet_name]
 
 if st.button(AI_BTN_GET, key="get_ai_suggestions", type="primary"):
-    try:
-        with st.spinner("Gemini is analyzing your pet's care routine…"):
-            agent = PawPalAgent()
-            suggestions = agent.get_suggestions(owner, ai_pet.id)
-        st.session_state.ai_suggestions[ai_pet.id] = suggestions
-        st.session_state.dismissed_suggestions = set()
-        st.rerun()
-    except ValueError as exc:
-        if "GEMINI_API_KEY" in str(exc):
-            st.error(AI_KEY_MISSING_MSG)
-        else:
+    now = time.time()
+    last = st.session_state.ai_last_call_time.get(ai_pet.id, 0.0)
+    cooldown_remaining = PET_COOLDOWN_SECONDS - (now - last)
+    session_exhausted = st.session_state.ai_call_count >= MAX_SESSION_CALLS
+
+    if session_exhausted:
+        st.warning(AI_RATE_SESSION_MSG.format(max=MAX_SESSION_CALLS))
+    elif cooldown_remaining > 0:
+        st.warning(AI_RATE_COOLDOWN_MSG.format(secs=int(cooldown_remaining), name=ai_pet.name))
+    else:
+        try:
+            with st.spinner("Gemini is analyzing your pet's care routine…"):
+                agent = PawPalAgent()
+                suggestions = agent.get_suggestions(owner, ai_pet.id)
+            st.session_state.ai_suggestions[ai_pet.id] = suggestions
+            st.session_state.dismissed_suggestions = set()
+            st.session_state.ai_call_count += 1
+            st.session_state.ai_last_call_time[ai_pet.id] = time.time()
+            st.rerun()
+        except ValueError as exc:
+            if "GEMINI_API_KEY" in str(exc):
+                st.error(AI_KEY_MISSING_MSG)
+            else:
+                st.error(AI_ERROR_MSG.format(error=str(exc)))
+        except Exception as exc:
             st.error(AI_ERROR_MSG.format(error=str(exc)))
-    except Exception as exc:
-        st.error(AI_ERROR_MSG.format(error=str(exc)))
+
+st.caption(AI_USAGE_CAPTION.format(used=st.session_state.ai_call_count, max=MAX_SESSION_CALLS))
 
 # --- Determine which slots are already occupied by pending tasks ---
 pending_slots: set[str] = {
