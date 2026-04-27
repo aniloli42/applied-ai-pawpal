@@ -1,0 +1,59 @@
+---
+description: PawPal+ coding rules for Cursor AI
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# PawPal+ Rules
+
+All core rules live in [AGENTS.md](../../AGENTS.md). This file mirrors them for Cursor.
+
+## Stack
+
+Python 3.11+, Streamlit, pytest. No TypeScript, no Node.
+
+## Architecture
+
+- `pawpal_system.py` — all business logic (6 dataclasses: Task, Pet, ScheduledSlot, Schedule, Scheduler, Owner)
+- `app.py` — Streamlit UI only
+- New features → new module files (e.g., `ai_scheduler.py`)
+- Do not add classes to `pawpal_system.py` unless extending a core model
+
+## Coding Rules
+
+- Type hints on all params and return types
+- Docstring on every public method and class
+- SOLID strictly (SRP, OCP, LSP, ISP, DIP)
+- DRY — extract repeated logic to shared methods
+- No inline comments
+
+## Testing Rules
+
+- TDD: write failing test first, then implement
+- No mocks of `pawpal_system.py` — use real objects
+- Happy path + edge cases (zero/empty/boundary) for every feature
+- UI logic is also tested
+- pytest only; files in `tests/`
+
+## Naming
+
+- `snake_case` everywhere
+- UUID identity fields use `id` suffix
+- Match existing style in `pawpal_system.py`
+
+## Commit Rules
+
+- Conventional Commits: `feat:`, `fix:`, `test:`, `refactor:`, `docs:`
+- One concern per commit
+- Reference task/feature in commit body
+
+## Hard Limits (ask user before doing)
+
+- Adding packages to `requirements.txt`
+- Adding file I/O / database / persistence
+- Changing fields on Task, Pet, Owner, Schedule, ScheduledSlot
+- Refactoring working code outside current task
+
+## Self-Maintenance
+
+If a rule becomes outdated, update this file **and** `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`.
