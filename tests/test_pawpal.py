@@ -655,3 +655,18 @@ class TestConflictDetection:
 
         assert "Morning Walk" in warnings[0]
         assert "Morning Feeding" in warnings[0]
+
+    def test_default_time_tasks_do_not_produce_false_conflict(self, pet):
+        """
+        Tasks created without an explicit time default to None (no time set).
+        Multiple such tasks must NOT generate a conflict warning —
+        None means 'unscheduled', not 'scheduled at midnight'.
+        """
+        t1 = Task(pet_id=pet.id, title="Walk",    duration_minutes=20)
+        t2 = Task(pet_id=pet.id, title="Feeding", duration_minutes=10)
+        t3 = Task(pet_id=pet.id, title="Grooming", duration_minutes=15)
+
+        assert t1.time is None
+        warnings = Scheduler.detect_time_conflicts([t1, t2, t3])
+
+        assert warnings == [], f"Expected no conflicts for unscheduled tasks, got: {warnings}"

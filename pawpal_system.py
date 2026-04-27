@@ -46,7 +46,7 @@ class Task:
     duration_minutes:   int
     priority:           str           = "medium"
     category:           str           = "other"
-    time:               str           = "00:00"      # HH:MM format
+    time:               Optional[str] = None         # HH:MM format; None = no specific time set
     notes:              str           = ""
     status:             str           = "pending"
     # --- recurrence ---
@@ -369,6 +369,8 @@ class Scheduler:
         warnings = []
         time_map: dict[str, list[str]] = {}
         for task in tasks:
+            if task.time is None:
+                continue
             time_map.setdefault(task.time, []).append(f"{task.title}")
             
         for time_str, titles in time_map.items():
@@ -390,7 +392,7 @@ class Scheduler:
         """
         # Python's sorted() uses lexical sorting for strings. 
         # A lambda function is passed as a "key" to sort by the HH:MM time property.
-        return sorted(tasks, key=lambda t: t.time)
+        return sorted(tasks, key=lambda t: (t.time is None, t.time or ""))
 
     @staticmethod
     def filter_tasks(
@@ -510,7 +512,7 @@ class Owner:
         duration_minutes:   int,
         priority:           str = "medium",
         category:           str = "other",
-        time:               str = "00:00",
+        time:               Optional[str] = None,
         notes:              str = "",
         status:             str = "pending",
         recurrence:         str = "none",
